@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed Aug 20 16:43:59 2025
+Created on Mon Aug 25 10:12:30 2025
 
 @author: OMISTAJA
 """
@@ -13,6 +13,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 import plotly.express as px
 import plotly.graph_objects as go
+import os
+from datetime import datetime
 
 # Streamlit-sovelluksen konfiguraatio
 st.set_page_config(
@@ -21,8 +23,16 @@ st.set_page_config(
     layout="wide"
 )
 
-@st.cache_data
-def lataa_ja_kasittele_data():
+def get_file_info():
+    """Hakee CSV-tiedoston aikaleiman ja koon"""
+    try:
+        stat = os.stat('valioliigadata_yksityiskohtaiset_keskiarvot.csv')
+        return stat.st_mtime, stat.st_size
+    except FileNotFoundError:
+        return 0, 0
+
+@st.cache_data(ttl=1800)  # Cache vanhenee 30 minuutissa
+def lataa_ja_kasittele_data(file_timestamp, file_size):
     """Lataa CSV-data ja laskee keskiarvot"""
     try:
         # Ladataan historiallinen data
@@ -195,9 +205,28 @@ def main():
     st.title("⚽ Valioliiga Laukausennustus")
     st.subheader("XGBoost-malli vedonlyönnin tueksi")
     
+    # Sivupalkki datan hallinnalle
+    st.sidebar.header("🔄 Datan hallinta")
+    
+    # Näytä tiedoston tila
+    file_timestamp, file_size = get_file_info()
+    if file_timestamp > 0:
+        last_modified = datetime.fromtimestamp(file_timestamp)
+        st.sidebar.success(f"📄 Data ladattu: {last_modified.strftime('%d.%m.%Y %H:%M')}")
+    else:
+        st.sidebar.error("❌ CSV-tiedostoa ei löydy")
+    
+    # Päivitä data -nappi
+    if st.sidebar.button("🆕 Päivitä data"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+    
+    st.sidebar.markdown("---")
+    
     # Lataa data
     with st.spinner("Ladataan dataa..."):
-        historiallinen, keskiarvot, joukkueet = lataa_ja_kasittele_data()
+        historiallinen, keskiarvot, joukkueet = lataa_ja_kasittele_data(file_timestamp, file_size)
     
     if historiallinen is None:
         st.stop()
@@ -362,12 +391,13 @@ def main():
     # Mallin tiedot sivupalkissa
     st.sidebar.markdown("---")
     st.sidebar.info(
-        """
+        f"""
         **ℹ️ Tietoja mallista:**
         - XGBoost-regressio
-        - Koulutettu historiallisella datalla
+        - Koulutettu historiallisella datalla ({len(historiallinen)} peliä)
         - Huomioi joukkueiden keskiarvot
         - Kertoimet ja koti/vieras-etu
+        - Cache vanhenee 30 min välein
         """
     )
 
