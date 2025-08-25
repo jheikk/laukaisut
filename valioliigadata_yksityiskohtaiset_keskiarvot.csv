@@ -1,6 +1,6 @@
 Kotijoukkue,Vierasjoukkue,Kotijoukkueen_maalit,Vierasjoukkueen_maalit,Kotijoukkueen_kerroin,Tasapelikerroin,Vierasjoukkueen_kerroin,Kotil,Vierasl,Kotijoukkue_laukausten_ka,Vierasjoukkue_laukausten_ka,Kotijoukkue_koti_laukausten_ka,Kotijoukkue_vieras_laukausten_ka,Vierasjoukkue_koti_laukausten_ka,Vierasjoukkue_vieras_laukausten_ka
 Fulham,Manchester Utd,1,1.0,3.4,3.6,2.05,13,10.0,13.71,14.75,13.71,12.56,16.0,14.75
-Crystal Palace,Nottingham,1,12.35,3.25,3.1,8.0,9,,14.57,11.57,14.57,11.67,10.78,11.57
+Crystal Palace,Nottingham,1,1,2.35,3.25,3.1,8,9,14.57,11.57,14.57,11.67,10.78,11.57
 Everton,Brighton,2,0.0,2.95,3.36,2.43,11,13.0,10.0,13.86,10.0,10.33,13.44,13.86
 Arsenal,Leeds,5,0.0,1.33,5.4,9.07,18,3.0,14.0,7.5,14.0,15.75,10.12,7.5
 Bournemouth,Wolves,1,0.0,1.82,3.75,1.82,414,6.0,14.12,11.14,14.12,14.12,12.89,11.14
@@ -179,4 +179,5 @@ Liverpool,Sunderland,4,1,1.1,11.28,21.19,16,3.0,16.8,10.33,16.8,15.12,11.0,10.33
 Manchester City,Chelsea,3,1,2.34,3.77,2.83,15,10.0,14.11,11.38,14.11,14.38,18.22,11.38
 Burnley,Newcastle,1,3,6.45,4.9,1.46,12,17.0,7.78,11.22,7.78,9.62,16.12,11.22
 Wolves,Arsenal,0,1,5.83,4.05,1.6,9,9.0,12.5,15.0,12.5,11.14,14.0,15.0
+
 
