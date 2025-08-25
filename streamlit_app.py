@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Created on Mon Aug 25 12:17:34 2025
+
+@author: OMISTAJA
+"""
+
+# -*- coding: utf-8 -*-
+"""
 Created on Mon Aug 25 10:12:30 2025
 
 @author: OMISTAJA
@@ -31,12 +38,68 @@ def get_file_info():
     except FileNotFoundError:
         return 0, 0
 
+def puhdista_data(df):
+    """Poistaa outlierit ja virheelliset arvot"""
+    alkuperainen_koko = len(df)
+    
+    # Poista epärealistiset laukausmäärät (yli 50 per joukkue)
+    df = df[(df['Kotil'] <= 50) & (df['Vierasl'] <= 50)]
+    
+    # Poista negatiiviset arvot
+    df = df[(df['Kotil'] >= 0) & (df['Vierasl'] >= 0)]
+    
+    # Tarkista kertoimet
+    df = df[(df['Kotijoukkueen_kerroin'] >= 1.01) & 
+            (df['Vierasjoukkueen_kerroin'] >= 1.01)]
+    
+    puhdistettu_koko = len(df)
+    if alkuperainen_koko > puhdistettu_koko:
+        st.info(f"🧹 Poistettiin {alkuperainen_koko - puhdistettu_koko} outlier-riviä datasta")
+    
+    return df
+
+def luo_feature_muuttujat(df):
+    """Luo uusia ennustemuuttujia analyysin perusteella"""
+    
+    # Perus voima-arvot
+    df['koti_voima'] = 1 / df['Kotijoukkueen_kerroin']
+    df['vieras_voima'] = 1 / df['Vierasjoukkueen_kerroin']
+    
+    # Voima-suhde (dominanssi)
+    df['voima_suhde'] = df['koti_voima'] / df['vieras_voima']
+    
+    # TÄRKEÄ: Epätasaisuus (ei tasaisuus!) - korrelaatio +0.144 vs laukaukset
+    df['pelin_epatasaisuus'] = abs(df['koti_voima'] - df['vieras_voima'])
+    
+    # Keskimääräinen laatu - korrelaatio +0.222 vs laukaukset  
+    df['keskimaarainen_voima'] = (df['koti_voima'] + df['vieras_voima']) / 2
+    
+    # Yhdistelmämuuttuja: Epätasainen + laadukas = paljon laukauksia
+    df['epatasainen_laadukas'] = df['pelin_epatasaisuus'] * df['keskimaarainen_voima']
+    
+    # Dominanssikerroin - kuinka ylivoimainen suosikki on
+    df['dominanssi'] = abs(1 - df['voima_suhde'])
+    
+    # Odotusarvo-painotettu osuus
+    df['odotettu_koti_osuus'] = df['koti_voima'] / (df['koti_voima'] + df['vieras_voima'])
+    
+    # Pelin "avoimuus" - korkeammat kertoimet = avoimempi peli
+    df['pelin_avoimuus'] = (df['Kotijoukkueen_kerroin'] + df['Vierasjoukkueen_kerroin']) / 2
+    
+    return df
+
 @st.cache_data(ttl=1800)  # Cache vanhenee 30 minuutissa
 def lataa_ja_kasittele_data(file_timestamp, file_size):
     """Lataa CSV-data ja laskee keskiarvot"""
     try:
         # Ladataan historiallinen data
         historiallinen = pd.read_csv('valioliigadata_yksityiskohtaiset_keskiarvot.csv')
+        
+        # Puhdista data
+        historiallinen = puhdista_data(historiallinen)
+        
+        # Luo uudet feature-muuttujat
+        historiallinen = luo_feature_muuttujat(historiallinen)
         
         # Lasketaan joukkueiden keskiarvot
         keskiarvot = {}
@@ -88,14 +151,22 @@ def lataa_ja_kasittele_data(file_timestamp, file_size):
 
 @st.cache_resource
 def treeni_mallit(historiallinen_data, keskiarvot):
-    """Kouluttaa XGBoost-mallit"""
+    """Kouluttaa XGBoost-mallit uusilla feature-muuttujilla"""
     
-    # Valmistetaan treenidata
+    # Päivitetyt feature-muuttujat
     features = [
+        # Perinteiset muuttujat
         'Kotijoukkueen_kerroin', 'Tasapelikerroin', 'Vierasjoukkueen_kerroin',
         'Kotijoukkue_laukausten_ka', 'Vierasjoukkue_laukausten_ka',
         'Kotijoukkue_koti_laukausten_ka', 'Kotijoukkue_vieras_laukausten_ka',
-        'Vierasjoukkue_koti_laukausten_ka', 'Vierasjoukkue_vieras_laukausten_ka'
+        'Vierasjoukkue_koti_laukausten_ka', 'Vierasjoukkue_vieras_laukausten_ka',
+        
+        # UUDET FEATURE-MUUTTUJAT (analyysin perusteella)
+        'koti_voima', 'vieras_voima', 'voima_suhde',
+        'pelin_epatasaisuus',  # TÄRKEÄ: Epätasaisuus lisää laukauksia
+        'keskimaarainen_voima', # TÄRKEÄ: Laatu lisää laukauksia
+        'epatasainen_laadukas', # Yhdistelmä parhaista ennustajista
+        'dominanssi', 'odotettu_koti_osuus', 'pelin_avoimuus'
     ]
     
     # Käsitellään joukkuenimet
@@ -129,31 +200,54 @@ def treeni_mallit(historiallinen_data, keskiarvot):
         random_state=42
     )
     
-    # Kouluta mallit
+    # Parannetut XGBoost-parametrit
     model_koti = xgb.XGBRegressor(
-        n_estimators=100,
-        max_depth=6,
-        learning_rate=0.1,
+        n_estimators=150,  # Lisätty iteraatiot
+        max_depth=8,       # Syvempi malli
+        learning_rate=0.08, # Hieman pienempi learning rate
+        subsample=0.8,     # Lisätty regularisaatio
+        colsample_bytree=0.8,
         random_state=42
     )
     model_koti.fit(X_train, y_koti_train)
     
     model_vieras = xgb.XGBRegressor(
-        n_estimators=100,
-        max_depth=6,
-        learning_rate=0.1,
+        n_estimators=150,
+        max_depth=8,
+        learning_rate=0.08,
+        subsample=0.8,
+        colsample_bytree=0.8,
         random_state=42
     )
     model_vieras.fit(X_train, y_vieras_train)
     
-    return model_koti, model_vieras, le_koti, le_vieras, features
+    # Näytä feature importance
+    koti_importance = model_koti.feature_importances_
+    feature_importance_df = pd.DataFrame({
+        'feature': features,
+        'importance': koti_importance
+    }).sort_values('importance', ascending=False)
+    
+    return model_koti, model_vieras, le_koti, le_vieras, features, feature_importance_df
 
 def tee_ennustus(kotijoukkue, vierasjoukkue, koti_kerroin, tasa_kerroin, vieras_kerroin, 
                 keskiarvot, model_koti, model_vieras, le_koti, le_vieras, features):
-    """Tekee ennustuksen yhdelle pelille"""
+    """Tekee ennustuksen yhdelle pelille uusilla feature-muuttujilla"""
+    
+    # Laske uudet feature-muuttujat
+    koti_voima = 1 / koti_kerroin
+    vieras_voima = 1 / vieras_kerroin
+    voima_suhde = koti_voima / vieras_voima
+    pelin_epatasaisuus = abs(koti_voima - vieras_voima)
+    keskimaarainen_voima = (koti_voima + vieras_voima) / 2
+    epatasainen_laadukas = pelin_epatasaisuus * keskimaarainen_voima
+    dominanssi = abs(1 - voima_suhde)
+    odotettu_koti_osuus = koti_voima / (koti_voima + vieras_voima)
+    pelin_avoimuus = (koti_kerroin + vieras_kerroin) / 2
     
     # Luo input-data
     input_data = {
+        # Perinteiset muuttujat
         'Kotijoukkueen_kerroin': koti_kerroin,
         'Tasapelikerroin': tasa_kerroin,
         'Vierasjoukkueen_kerroin': vieras_kerroin,
@@ -164,7 +258,18 @@ def tee_ennustus(kotijoukkue, vierasjoukkue, koti_kerroin, tasa_kerroin, vieras_
         'Vierasjoukkue_koti_laukausten_ka': keskiarvot[vierasjoukkue]['koti_keskiarvo'],
         'Vierasjoukkue_vieras_laukausten_ka': keskiarvot[vierasjoukkue]['vieras_keskiarvo'],
         'Kotijoukkue_encoded': le_koti.transform([kotijoukkue])[0],
-        'Vierasjoukkue_encoded': le_vieras.transform([vierasjoukkue])[0]
+        'Vierasjoukkue_encoded': le_vieras.transform([vierasjoukkue])[0],
+        
+        # UUDET FEATURE-MUUTTUJAT
+        'koti_voima': koti_voima,
+        'vieras_voima': vieras_voima,
+        'voima_suhde': voima_suhde,
+        'pelin_epatasaisuus': pelin_epatasaisuus,
+        'keskimaarainen_voima': keskimaarainen_voima,
+        'epatasainen_laadukas': epatasainen_laadukas,
+        'dominanssi': dominanssi,
+        'odotettu_koti_osuus': odotettu_koti_osuus,
+        'pelin_avoimuus': pelin_avoimuus
     }
     
     # Luo DataFrame
@@ -175,7 +280,7 @@ def tee_ennustus(kotijoukkue, vierasjoukkue, koti_kerroin, tasa_kerroin, vieras_
     koti_ennustus = model_koti.predict(X_input)[0]
     vieras_ennustus = model_vieras.predict(X_input)[0]
     
-    return koti_ennustus, vieras_ennustus
+    return koti_ennustus, vieras_ennustus, input_data
 
 def laske_panossuositus(yhteensa_laukaukset, raja):
     """Laskee panossuosituksen"""
@@ -202,11 +307,11 @@ def laske_panossuositus(yhteensa_laukaukset, raja):
 
 def main():
     # Otsikko
-    st.title("⚽ Valioliiga Laukausennustus")
-    st.subheader("XGBoost-malli vedonlyönnin tueksi")
+    st.title("⚽ Valioliiga Laukausennustus v2.0")
+    st.subheader("XGBoost-malli parannetuilla feature-muuttujilla")
     
     # Sivupalkki datan hallinnalle
-    st.sidebar.header("🔄 Datan hallinta")
+    st.sidebar.header("📄 Datan hallinta")
     
     # Näytä tiedoston tila
     file_timestamp, file_size = get_file_info()
@@ -232,10 +337,18 @@ def main():
         st.stop()
     
     # Treeni mallit
-    with st.spinner("Koulutetaan koneoppimismallit..."):
-        model_koti, model_vieras, le_koti, le_vieras, features = treeni_mallit(historiallinen, keskiarvot)
+    with st.spinner("Koulutetaan koneoppimismallit uusilla ominaisuuksilla..."):
+        model_koti, model_vieras, le_koti, le_vieras, features, feature_importance = treeni_mallit(historiallinen, keskiarvot)
     
-    st.success("✅ Mallit koulutettu onnistuneesti!")
+    st.success("✅ Mallit koulutettu onnistuneesti uusilla feature-muuttujilla!")
+    
+    # Feature importance sivupalkissa
+    with st.sidebar.expander("🎯 Tärkeimmät muuttujat"):
+        st.dataframe(
+            feature_importance.head(10), 
+            use_container_width=True,
+            hide_index=True
+        )
     
     # Sivupalkki syötteille
     st.sidebar.header("🔧 Pelin tiedot")
@@ -299,8 +412,8 @@ def main():
     if st.sidebar.button("🚀 TEE ENNUSTUS", type="primary"):
         
         # Tee ennustus
-        with st.spinner("Lasketaan ennustusta..."):
-            koti_ennustus, vieras_ennustus = tee_ennustus(
+        with st.spinner("Lasketaan ennustusta uusilla ominaisuuksilla..."):
+            koti_ennustus, vieras_ennustus, feature_data = tee_ennustus(
                 kotijoukkue, vierasjoukkue, koti_kerroin, tasa_kerroin, vieras_kerroin,
                 keskiarvot, model_koti, model_vieras, le_koti, le_vieras, features
             )
@@ -310,7 +423,7 @@ def main():
         
         # Näytä tulokset
         st.markdown("---")
-        st.header("📊 ENNUSTUSTULOKSET")
+        st.header("📊 ENNUSTUSTULOKSET v2.0")
         
         # Pelin perustiedot
         col1, col2, col3 = st.columns(3)
@@ -352,6 +465,54 @@ def main():
         
         st.info(f"**Ero rajaan:** {ero:+.1f} laukausta")
         
+        # UUSI: Feature-analyysi
+        st.markdown("---")
+        st.subheader("🔍 Pelin analytiikka (uudet ominaisuudet)")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric(
+                "Epätasaisuus",
+                f"{feature_data['pelin_epatasaisuus']:.3f}",
+                "Korkeampi → Enemmän laukauksia"
+            )
+            
+        with col2:
+            st.metric(
+                "Keskimääräinen voima",
+                f"{feature_data['keskimaarainen_voima']:.3f}",
+                "Korkeampi → Enemmän laukauksia"
+            )
+            
+        with col3:
+            st.metric(
+                "Epätasainen + Laadukas",
+                f"{feature_data['epatasainen_laadukas']:.3f}",
+                "Yhdistelmämuuttuja"
+            )
+            
+        with col4:
+            st.metric(
+                "Dominanssi",
+                f"{feature_data['dominanssi']:.3f}",
+                "Suosikin ylivoimaisuus"
+            )
+        
+        # Selitykset
+        with st.expander("📖 Uusien ominaisuuksien selitykset"):
+            st.write("""
+            **🔹 Epätasaisuus:** Mittaa joukkueiden voimaeroa. Korkea arvo = yksipuolinen peli → Paljon laukauksia.
+            
+            **🔹 Keskimääräinen voima:** Mittaa pelin laatua. Korkea arvo = laadukkaat joukkueet → Paljon laukauksia.
+            
+            **🔹 Epätasainen + Laadukas:** Yhdistää parhaat ennustajat. Korkea arvo = todennäköisesti paljon laukauksia.
+            
+            **🔹 Dominanssi:** Mittaa kuinka ylivoimainen suosikki on (0 = tasaväkinen, 1 = täysin ylivoimainen).
+            
+            ⚡ **Analyysin löydös:** Epätasaiset ja laadukkaat pelit tuottavat eniten laukauksia!
+            """)
+        
         # Visualisointi
         st.markdown("---")
         st.subheader("📈 Visualisointi")
@@ -367,7 +528,7 @@ def main():
                       annotation_text=f"O/U Raja: {ou_raja}")
         
         fig.update_layout(
-            title=f"{kotijoukkue} vs {vierasjoukkue} - Laukausennustus",
+            title=f"{kotijoukkue} vs {vierasjoukkue} - Laukausennustus v2.0",
             yaxis_title="Laukaukset",
             showlegend=False
         )
@@ -382,22 +543,25 @@ def main():
                 st.subheader(f"🏠 {kotijoukkue}")
                 st.write(f"**Keskiarvo kotona:** {keskiarvot[kotijoukkue]['koti_keskiarvo']:.1f}")
                 st.write(f"**Keskiarvo vieraissa:** {keskiarvot[kotijoukkue]['vieras_keskiarvo']:.1f}")
+                st.write(f"**Voima-arvo:** {feature_data['koti_voima']:.3f}")
             
             with col2:
                 st.subheader(f"✈️ {vierasjoukkue}")
                 st.write(f"**Keskiarvo kotona:** {keskiarvot[vierasjoukkue]['koti_keskiarvo']:.1f}")
                 st.write(f"**Keskiarvo vieraissa:** {keskiarvot[vierasjoukkue]['vieras_keskiarvo']:.1f}")
+                st.write(f"**Voima-arvo:** {feature_data['vieras_voima']:.3f}")
     
     # Mallin tiedot sivupalkissa
     st.sidebar.markdown("---")
     st.sidebar.info(
         f"""
-        **ℹ️ Tietoja mallista:**
-        - XGBoost-regressio
-        - Koulutettu historiallisella datalla ({len(historiallinen)} peliä)
-        - Huomioi joukkueiden keskiarvot
-        - Kertoimet ja koti/vieras-etu
-        - Cache vanhenee 30 min välein
+        **ℹ️ Mallin v2.0 parannukset:**
+        - ✅ Outlierit poistettu datasta
+        - ✅ 9 uutta feature-muuttujaa
+        - ✅ Epätasaisuus + Laatu -analyysi
+        - ✅ Parannetut XGBoost-parametrit
+        - ✅ Feature importance -näkymä
+        - 📊 Koulutettu {len(historiallinen) if historiallinen is not None else 0} puhdistetulla pelillä
         """
     )
 
